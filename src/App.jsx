@@ -955,10 +955,14 @@ function selectByObject(object, sceneState, setSelectedUuid) {
   setSelectedUuid(object.uuid);
 
   const meshes = collectMeshes(object);
+  const seenMats = new Set();
   meshes.forEach((mesh) => {
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     mats.forEach((mat) => {
-      if (!mat) return;
+      // Dedupe shared materials: a second entry would snapshot the
+      // already-highlighted emissive and restore the wrong value on deselect.
+      if (!mat || seenMats.has(mat.uuid)) return;
+      seenMats.add(mat.uuid);
       sceneState.highlighted.push({
         mat,
         emissive: mat.emissive ? mat.emissive.clone() : null,
