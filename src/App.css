@@ -453,8 +453,33 @@ canvas {
 }
 
 .tree-name {
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tree-eye {
+  background: none;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0.75;
+  padding: 0 4px;
+}
+
+.tree-eye:hover {
+  opacity: 1;
+}
+
+.tree-eye.off {
+  opacity: 0.35;
+}
+
+.tree-row.hidden-node .tree-name {
+  opacity: 0.4;
+  text-decoration: line-through;
 }
 
 /* ---------- Mobile ---------- */

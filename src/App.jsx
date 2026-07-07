@@ -91,6 +91,7 @@ function App() {
   const [selectedUuid, setSelectedUuid] = useState(null);
   const [gizmoMode, setGizmoMode] = useState('translate');
   const [explode, setExplode] = useState(ZERO_EXPLODE);
+  const [hiddenUuids, setHiddenUuids] = useState(() => new Set());
   const [panels, setPanels] = useState(() => ({
     tree: window.innerWidth > 720,
     transform: false,
@@ -310,8 +311,9 @@ function App() {
       raycaster.setFromCamera(pointer, camera);
       const hits = raycaster.intersectObject(sceneState.carModel, true);
 
-      if (hits.length > 0) {
-        selectByObject(hits[0].object, sceneState, setSelectedUuid);
+      const visibleHit = hits.find((hit) => isChainVisible(hit.object));
+      if (visibleHit) {
+        selectByObject(visibleHit.object, sceneState, setSelectedUuid);
       } else {
         clearSelection(sceneState, setSelectedUuid);
       }
@@ -448,9 +450,32 @@ function App() {
   };
 
   const selectByUuid = (uuid) => {
+    if (uuid === selectedUuid) {
+      clearSelection(sceneRef.current, setSelectedUuid);
+      return;
+    }
     const object = sceneRef.current.nodeMap.get(uuid);
     if (!object) return;
     selectByObject(object, sceneRef.current, setSelectedUuid);
+  };
+
+  const toggleVisibility = (uuid) => {
+    const object = sceneRef.current.nodeMap.get(uuid);
+    if (!object) return;
+
+    object.visible = !object.visible;
+    if (!object.visible && uuid === selectedUuid) {
+      clearSelection(sceneRef.current, setSelectedUuid);
+    }
+    setHiddenUuids((current) => {
+      const next = new Set(current);
+      if (object.visible) {
+        next.delete(uuid);
+      } else {
+        next.add(uuid);
+      }
+      return next;
+    });
   };
 
   const deselect = () => {
@@ -578,12 +603,19 @@ function App() {
               <button className="close-btn light" onClick={() => closePanel('tree')} type="button">✕</button>
             </div>
             <div className="settings-body tree-panel-body">
+              {selectedUuid && (
+                <button className="ctl-btn wide" onClick={deselect} type="button">
+                  Deselect: {selectedLabel || 'current object'}
+                </button>
+              )}
               {modelTree ? (
                 <TreeNode
                   node={modelTree}
                   depth={0}
                   selectedUuid={selectedUuid}
                   onSelect={selectByUuid}
+                  hiddenUuids={hiddenUuids}
+                  onToggleVisible={toggleVisibility}
                   defaultOpen
                 />
               ) : (
@@ -821,17 +853,19 @@ function App() {
   );
 }
 
-function TreeNode({ node, depth, selectedUuid, onSelect, defaultOpen }) {
+function TreeNode({ node, depth, selectedUuid, onSelect, hiddenUuids, onToggleVisible, defaultOpen }) {
   const [open, setOpen] = useState(Boolean(defaultOpen));
   const hasChildren = node.children.length > 0;
   const isSelected = node.uuid === selectedUuid;
+  const isHidden = hiddenUuids.has(node.uuid);
 
   return (
     <div className="tree-node">
       <div
-        className={`tree-row ${isSelected ? 'selected' : ''}`}
+        className={`tree-row ${isSelected ? 'selected' : ''} ${isHidden ? 'hidden-node' : ''}`}
         style={{ paddingLeft: `${depth * 14 + 6}px` }}
         onClick={() => onSelect(node.uuid)}
+        title={isSelected ? 'Click again to deselect' : 'Click to select'}
       >
         {hasChildren ? (
           <span
@@ -847,6 +881,18 @@ function TreeNode({ node, depth, selectedUuid, onSelect, defaultOpen }) {
           <span className="tree-caret tree-caret-leaf">•</span>
         )}
         <span className="tree-name">{node.label}</span>
+        <button
+          aria-label={isHidden ? `Show ${node.label}` : `Hide ${node.label}`}
+          className={`tree-eye ${isHidden ? 'off' : ''}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleVisible(node.uuid);
+          }}
+          title={isHidden ? 'Show' : 'Hide'}
+          type="button"
+        >
+          {isHidden ? '🚫' : '👁'}
+        </button>
       </div>
       {hasChildren && open && (
         <div className="tree-children">
@@ -857,6 +903,8 @@ function TreeNode({ node, depth, selectedUuid, onSelect, defaultOpen }) {
               depth={depth + 1}
               selectedUuid={selectedUuid}
               onSelect={onSelect}
+              hiddenUuids={hiddenUuids}
+              onToggleVisible={onToggleVisible}
             />
           ))}
         </div>
@@ -880,6 +928,15 @@ function buildTreeNode(object, nodeMap, overrideLabel) {
     label,
     children,
   };
+}
+
+function isChainVisible(object) {
+  let current = object;
+  while (current) {
+    if (!current.visible) return false;
+    current = current.parent;
+  }
+  return true;
 }
 
 function collectMeshes(object) {
