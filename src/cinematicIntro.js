@@ -40,18 +40,18 @@ const SHOTS = [
   },
   {
     name: 'grille-angle', start: 9.8, end: 12.2, fov: [28, 28],
-    cam: (u, d) => [d.L + 1.0 * d.W, lerp(-0.45, -0.1, u) * d.W, 0.62 * d.H],
-    look: (u, d) => [d.L, lerp(-0.2, 0.05, u) * d.W, 0.6 * d.H],
+    cam: (u, d) => [d.L + 1.0 * d.W, lerp(-0.45, -0.1, u) * d.W, 0.47 * d.H],
+    look: (u, d) => [d.L, lerp(-0.2, 0.05, u) * d.W, 0.42 * d.H],
   },
   {
     name: 'grille-badge', start: 12.2, end: 14.3, fov: [28, 26],
-    cam: (u, d) => [d.L + lerp(0.9, 0.72, u) * d.W, 0, 0.74 * d.H],
-    look: (u, d) => [d.L, 0, 0.68 * d.H],
+    cam: (u, d) => [d.L + lerp(0.9, 0.72, u) * d.W, 0, 0.52 * d.H],
+    look: (u, d) => [d.L, 0, 0.46 * d.H],
   },
   {
     name: 'headlamp-fender', start: 14.3, end: 17.0, fov: [30, 30],
-    cam: (u, d) => [d.L + lerp(0.55, 0.35, u) * d.W, lerp(1.45, 1.7, u) * d.W, 0.78 * d.H],
-    look: (u, d) => [lerp(0.8, 0.6, u) * d.L, 0.75 * d.W, 0.58 * d.H],
+    cam: (u, d) => [d.L + lerp(0.55, 0.35, u) * d.W, lerp(1.45, 1.7, u) * d.W, 0.66 * d.H],
+    look: (u, d) => [lerp(0.8, 0.6, u) * d.L, 0.75 * d.W, 0.5 * d.H],
   },
   {
     name: 'wide-front', start: 17.0, end: 19.2, fov: [34, 34],
