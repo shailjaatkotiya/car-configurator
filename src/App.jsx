@@ -5,6 +5,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import modelUrl from '../2022_toyota_vellfire.glb?url';
+import { CinematicIntro } from './cinematicIntro.js';
 
 const COLORS = [
   { name: 'Red', value: '#e94560' },
@@ -33,6 +34,9 @@ const ZERO_EXPLODE = { radial: 0, x: 0, y: 0, z: 0 };
 const easeInOutQuad = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
 const getDefaultCameraPosition = () => (window.innerWidth <= 720 ? [4.8, 2.4, 8.5] : [4, 2, 5]);
 const getDefaultCameraTarget = () => (window.innerWidth <= 720 ? [0, -0.35, 0] : [0, 0.5, 0]);
+// The model's nose points down -Z (see VIEWS.front); the intro frames its shots from this.
+const CAR_FRONT = new THREE.Vector3(0, 0, -1);
+const INTRO_SKIP_EVENTS = ['pointerdown', 'wheel', 'touchstart', 'keydown'];
 
 const TRANSFORM_MODES = [
   { mode: 'translate', title: 'Move', desc: 'Move objects in 3D space' },
@@ -75,7 +79,12 @@ function App() {
       rotY: 0,
     },
     tween: null,
+    intro: null,
+    startIntro: null,
+    skipIntro: null,
   });
+  const introFadeRef = useRef(null);
+  const introProgressRef = useRef(null);
 
   const [activeColor, setActiveColor] = useState(COLORS[0].value);
   const [colorMode, setColorMode] = useState('default');
@@ -84,6 +93,9 @@ function App() {
   const [loadingText, setLoadingText] = useState('Loading 3D Model...');
   const [isLoaded, setIsLoaded] = useState(false);
   const [hasLoadError, setHasLoadError] = useState(false);
+  // Cinematic intro plays after load; the configurator UI unlocks when it ends or is skipped
+  const [introActive, setIntroActive] = useState(false);
+  const [introHint, setIntroHint] = useState(false);
   const [autoRotate, setAutoRotate] = useState(false);
   const [gridVisible, setGridVisible] = useState(false);
   const [activeView, setActiveView] = useState('');
@@ -144,7 +156,8 @@ function App() {
     scene.add(transformControls.getHelper());
     sceneState.transformControls = transformControls;
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    scene.add(ambientLight);
 
     const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
     dirLight.position.set(5, 8, 5);
@@ -164,6 +177,83 @@ function App() {
     grid.visible = false;
     scene.add(grid);
     sceneState.grid = grid;
+
+    let hintTimer = 0;
+    const showHint = () => {
+      setIntroHint(true);
+      window.clearTimeout(hintTimer);
+      hintTimer = window.setTimeout(() => setIntroHint(false), 4000);
+    };
+
+    // Any attempt to move the car / camera ends the intro immediately and hands
+    // over control from the current shot (capture phase, so OrbitControls sees
+    // the same pointerdown as enabled and the drag starts right away).
+    const handleIntroInterrupt = (event) => {
+      const { intro } = sceneState;
+      if (!intro?.playing) return;
+      if (event.type === 'keydown' && ['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) return;
+      if (event.type === 'pointerdown' && event.target === canvas) sceneState.swallowClick = true;
+      intro.skip();
+    };
+
+    const finishIntro = (reason, look) => {
+      INTRO_SKIP_EVENTS.forEach((type) => window.removeEventListener(type, handleIntroInterrupt, true));
+      controls.enabled = true;
+      setIntroActive(false);
+      showHint();
+
+      if (reason === 'complete') {
+        controls.target.copy(look);
+        controls.update();
+        return;
+      }
+
+      // Skipped mid-shot: keep the camera's current direction, but ease it to a
+      // pose OrbitControls accepts (target on the car, legal distance / angle)
+      // so close-up shots don't snap when the user starts dragging.
+      const target = new THREE.Vector3(...getDefaultCameraTarget());
+      const dir = camera.position.clone().sub(target);
+      if (dir.lengthSq() < 1e-6) dir.set(1, 0.3, -1);
+      dir.normalize();
+      const minElev = Math.cos(controls.maxPolarAngle) + 0.05;
+      if (dir.y < minElev) {
+        dir.y = minElev;
+        dir.normalize();
+      }
+      const dist = THREE.MathUtils.clamp(camera.position.distanceTo(target), controls.minDistance + 1.2, controls.maxDistance);
+      sceneState.tween = {
+        fromPos: camera.position.clone(),
+        toPos: target.clone().addScaledVector(dir, dist),
+        fromTarget: look.clone(),
+        toTarget: target,
+        t: 0,
+        dur: 0.7,
+      };
+    };
+
+    const startIntro = () => {
+      const { carModel } = sceneState;
+      if (!carModel) return;
+      sceneState.intro?.dispose();
+      sceneState.tween = null;
+      controls.enabled = false;
+      sceneState.intro = new CinematicIntro({
+        camera,
+        scene,
+        model: carModel,
+        lights: [ambientLight, dirLight, dirLight2, rimLight],
+        front: CAR_FRONT.clone().applyQuaternion(carModel.getWorldQuaternion(new THREE.Quaternion())),
+        overlay: { fade: introFadeRef.current, progress: introProgressRef.current },
+        onFinish: finishIntro,
+      });
+      INTRO_SKIP_EVENTS.forEach((type) =>
+        window.addEventListener(type, handleIntroInterrupt, { capture: true, passive: true }),
+      );
+      setIntroHint(false);
+      setIntroActive(true);
+    };
+    sceneState.startIntro = startIntro;
+    sceneState.skipIntro = () => sceneState.intro?.skip();
 
     const dracoLoader = new DRACOLoader();
     dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/libs/draco/');
@@ -272,6 +362,7 @@ function App() {
         setModelTree(tree);
 
         setIsLoaded(true);
+        startIntro();
       },
       (progress) => {
         if (!progress.total) return;
@@ -291,6 +382,12 @@ function App() {
     let pointerDownTime = 0;
 
     const handlePointerDown = (event) => {
+      if (sceneState.swallowClick || sceneState.intro?.playing) {
+        // This press ended (or is ending) the intro — it must not select a part
+        sceneState.swallowClick = false;
+        pointerDownPos = null;
+        return;
+      }
       pointerDownPos = { x: event.clientX, y: event.clientY };
       pointerDownTime = performance.now();
     };
@@ -329,6 +426,15 @@ function App() {
       animationFrame = window.requestAnimationFrame(animate);
       const dt = clock.getDelta();
 
+      // The GSAP timeline in CinematicIntro drives the camera on its own ticker
+      const { intro } = sceneState;
+      if (intro?.finished) sceneState.intro = null;
+      if (intro?.playing) {
+        // The intro owns the camera; OrbitControls.update() would overwrite it
+        renderer.render(scene, camera);
+        return;
+      }
+
       if (sceneState.tween) {
         sceneState.tween.t = Math.min(1, sceneState.tween.t + dt / sceneState.tween.dur);
         const k = easeInOutQuad(sceneState.tween.t);
@@ -357,6 +463,10 @@ function App() {
     return () => {
       disposed = true;
       window.cancelAnimationFrame(animationFrame);
+      window.clearTimeout(hintTimer);
+      INTRO_SKIP_EVENTS.forEach((type) => window.removeEventListener(type, handleIntroInterrupt, true));
+      sceneState.intro?.dispose();
+      sceneState.intro = null;
       window.removeEventListener('resize', handleResize);
       canvas.removeEventListener('pointerdown', handlePointerDown);
       canvas.removeEventListener('pointerup', handlePointerUp);
@@ -576,12 +686,30 @@ function App() {
         <p>{loadingText}</p>
       </div>
 
-      <header className="info">
+      <div className={`intro-overlay ${introActive ? 'active' : ''}`} aria-hidden={!introActive}>
+        <div className="intro-fade" ref={introFadeRef} />
+        <div className="intro-progress">
+          <div className="intro-progress-fill" ref={introProgressRef} />
+        </div>
+        {introActive && (
+          <>
+            <p className="intro-tip">Click, drag or scroll anytime to take control</p>
+            <button className="intro-skip" onClick={() => sceneRef.current.skipIntro?.()} type="button">
+              Skip intro ›
+            </button>
+          </>
+        )}
+      </div>
+      <div className={`intro-hint ${introHint ? 'show' : ''}`}>
+        Your turn — drag to orbit, click a part to select, customise from the panels
+      </div>
+
+      <header className={`info ${introActive ? 'ui-hidden' : ''}`}>
         <h1>3D CAR CONFIGURATOR</h1>
         <p>Drag to rotate &bull; Scroll to zoom &bull; Click a part to select it</p>
       </header>
 
-      <nav className="sidebar" aria-label="Tool panels">
+      <nav className={`sidebar ${introActive ? 'ui-hidden' : ''}`} aria-label="Tool panels">
         {SIDEBAR_BUTTONS.map(({ key, icon, label }) => (
           <button
             className={`side-btn ${panels[key] ? 'active' : ''}`}
@@ -595,7 +723,7 @@ function App() {
         ))}
       </nav>
 
-      <div className="right-stack">
+      <div className={`right-stack ${introActive ? 'ui-hidden' : ''}`}>
         {panels.tree && (
           <section className="settings-card" aria-label="Model tree">
             <div className="settings-head">
@@ -843,6 +971,18 @@ function App() {
               </div>
 
               <button className="ctl-btn wide" onClick={resetView} type="button">↻ Reset View</button>
+              <button
+                className="ctl-btn wide"
+                onClick={() => {
+                  setAutoRotate(false);
+                  setActiveView('');
+                  deselect();
+                  sceneRef.current.startIntro?.();
+                }}
+                type="button"
+              >
+                ▶ Replay Cinematic Intro
+              </button>
             </div>
           </section>
         )}
